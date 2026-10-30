@@ -15,7 +15,7 @@ SNS 프로필·게시글·댓글 텍스트와 사진에서 **개인정보를 찾
 |---|---|---|
 | 개인정보 탐지·분류 기준 정의 (개인정보보호위원회·법령 참고) | `kkoripyo/schema.py` `TAXONOMY` | ✅ |
 | 텍스트(프로필, 게시글, 댓글)에서 개인정보 추출 | `rules.py`(정규식) + `llm.py`(LLM) | ✅ |
-| OCR로 사진 속 텍스트 추출 | `ocr.py` (Tesseract `kor+eng`) | ✅ |
+| OCR로 사진 속 텍스트 추출 | `ocr.py` (Tesseract `kor+eng` / PaddleOCR `korean_PP-OCRv5_mobile_rec`) | ✅ Tesseract / ⚠️ Paddle 실행 미검증 |
 | Vision LLM으로 사진 속 개인정보·식별 단서 탐지 | `llm.py` `extract_image` (OpenAI) | ✅ 코드 / ⚠️ 실호출 미검증 |
 | 유형·값·근거·출처로 구조화 (Structured Outputs) | `schema.py` (Pydantic → `chat.completions.parse`) | ✅ |
 | 중복 제거 및 동일 정보 매칭 | `match.py` | ✅ |
@@ -122,6 +122,20 @@ python -m kkoripyo --profile samples/fake_profile.json --image samples/fake_card
 python -m kkoripyo --image some.jpg --text "댓글 내용" --no-llm      # OCR+정규식만
 ```
 
+### OCR 엔진 선택
+
+| `OCR_ENGINE` | 모델 | 설치 |
+|---|---|---|
+| `tesseract` (기본) | Tesseract 5 `kor+eng` | 위 1) |
+| `paddle` | PaddleOCR PP-OCRv5 검출 + [`korean_PP-OCRv5_mobile_rec`](https://aistudio.baidu.com/modelsdetail/31927/intro) 인식 | `pip install paddlepaddle paddleocr` (첫 실행 때 가중치 자동 다운로드) |
+
+```bash
+OCR_ENGINE=paddle python -m kkoripyo --image private/student_card.jpg --no-llm -o private/out_paddle.json
+python evaluate.py --pred private/out_paddle.json --gold private/student_card.gold.json
+```
+
+장소·얼굴·간판·교복 같은 **글자가 아닌 단서는 OCR로는 못 잡고** Vision LLM 단계(`llm.py`)에서 `location` / `face` / `other_clue` 로 찾습니다.
+
 `OPENAI_API_KEY` 가 없으면 경고를 띄우고 OCR+정규식만으로 돌며, 출력의 `llm_used` 가 `false` 가 됩니다.
 
 ## 평가
@@ -160,6 +174,7 @@ python -m pytest tests          # 또는 python tests/test_pipeline.py
 ## 남은 문제
 
 - **Vision LLM 실호출 미검증**: 개발 환경에서 `api.openai.com` 접근이 막혀 있어, LLM 단계는 대역(stub) 클라이언트로 병합 로직만 테스트했습니다. 키를 넣고 `private/` 데이터로 한 번 돌려 위 표를 채워주세요. 기본 모델은 `gpt-4o-mini`, `.env` 의 `OPENAI_MODEL` 로 변경.
+- **PaddleOCR 실행 미검증**: 개발 환경에서 모델 가중치 서버 접근이 막혀, 결과 변환 로직만 대역으로 테스트했습니다. 맥에서 위 명령으로 돌려 Tesseract 수치와 비교해 주세요.
 - 규칙 기반 이름 탐지는 "3음절 + 흔한 성씨" 휴리스틱이라 오탐(`연락처`)이 납니다. LLM 사용 시 LLM 결과를 우선 보세요.
 - 얼굴 매칭은 "한 분석 = 한 사람" 가정. 여러 사진에 여러 얼굴이면 얼굴 임베딩 비교가 필요합니다.
 - 서로 다른 유형 간 연결(이 이름 ↔ 이 학번이 같은 사람)은 하지 않습니다. 관계 그래프 파트에서 `entities` 를 노드로 쓰면 됩니다.
