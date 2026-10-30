@@ -1,6 +1,11 @@
-"""OCR → 라인 단위 텍스트 + 박스. 엔진: OCR_ENGINE=tesseract(기본) | paddle | none(Vision LLM만)"""
+"""OCR → 라인 단위 텍스트 + 박스.
+엔진: OCR_ENGINE=tesseract(기본) | paddle | remote(OCR_SERVER_URL 의 GPU 서버 호출) | none(Vision LLM만)"""
+import base64
+import json
 import os
 import re
+import sys
+import urllib.request
 from functools import cache
 
 import pytesseract
@@ -16,7 +21,22 @@ def ocr_lines(path: str, lang: str = "kor+eng") -> list[dict]:
         return []
     if engine == "paddle":
         return _paddle_lines(path)
+    if engine == "remote":
+        return _remote_lines(path)
     return _tesseract_lines(path, lang)
+
+
+def _remote_lines(path: str) -> list[dict]:
+    """GPU 서버(kkoripyo.server)의 /ocr 호출. 서버가 실패 상태를 주면 경고 후 빈 결과(파이프라인은 계속)."""
+    body = json.dumps({"images": [{"id": os.path.basename(path),
+                                   "base64": base64.b64encode(open(path, "rb").read()).decode()}]}).encode()
+    req = urllib.request.Request(os.environ["OCR_SERVER_URL"].rstrip("/") + "/ocr", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        res = json.load(r)["results"][0]
+    if res["status"] not in ("ok", "no_text"):
+        print(f"[경고] OCR 서버: {path} → {res['status']} ({res['error']})", file=sys.stderr)
+    return res["lines"]
 
 
 @cache
