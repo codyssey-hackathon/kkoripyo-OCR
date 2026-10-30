@@ -2,3 +2,6 @@ pytesseract>=0.3.10
 pillow>=10
 pydantic>=2
 openai>=1.92
+# OCR_ENGINE=paddle 쓸 때만
+# paddlepaddle>=3.0
+# paddleocr>=3.0
