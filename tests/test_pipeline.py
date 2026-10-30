@@ -35,6 +35,7 @@ def test_rules_no_overlap():
     types = [h["type"] for h in rules.find("카드 1234-5678-9012-3456 결제")]
     assert types == ["card_number"]  # 카드번호 일부가 전화번호로 중복 탐지되지 않음
     assert [h["type"] for h in rules.find("주민번호 900101-1234567")] == ["rrn"]
+    assert [h["value"] for h in rules.find("900101-1****** 이고 900101-2")] == ["900101-1******", "900101-2"]
 
 
 def _stub(responses):
