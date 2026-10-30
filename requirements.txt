@@ -1,0 +1,4 @@
+pytesseract>=0.3.10
+pillow>=10
+pydantic>=2
+openai>=1.92
