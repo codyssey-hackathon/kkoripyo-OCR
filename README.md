@@ -127,6 +127,7 @@ python -m kkoripyo --image some.jpg --text "댓글 내용" --no-llm      # OCR+�
 | `OCR_ENGINE` | 모델 | 설치 |
 |---|---|---|
 | `tesseract` (기본) | Tesseract 5 `kor+eng` | 위 1) |
+| `none` | OCR 생략, Vision LLM 만 사용 (지연·설치 최소화) | - |
 | `paddle` | PaddleOCR PP-OCRv5 검출 + [`korean_PP-OCRv5_mobile_rec`](https://aistudio.baidu.com/modelsdetail/31927/intro) 인식 | `pip install paddlepaddle paddleocr` (첫 실행 때 가중치 자동 다운로드) |
 
 ```bash
@@ -144,6 +145,26 @@ python evaluate.py --pred private/out_paddle.json --gold private/student_card.go
 python evaluate.py --pred out.json --gold samples/fake.gold.json
 python -m pytest tests          # 또는 python tests/test_pipeline.py
 ```
+
+### 테스트 이미지 바꿔가며 일괄 평가
+
+`private/` 에 **이미지와 같은 이름의 정답셋**을 넣고 한 번에 돌립니다. 이미지는 1장씩 따로 분석되고, 결과는 `<이름>.out.json` 으로 저장됩니다.
+
+```
+private/
+├── student_card.jpg
+├── student_card.gold.json
+├── baby_record.jpg
+└── baby_record.gold.json      ← 정답셋 없는 이미지는 평가에서 빠짐
+```
+
+```bash
+python evaluate.py --dir private                        # .env 에 키 있으면 LLM 포함
+OCR_ENGINE=none python evaluate.py --dir private        # Vision LLM 만
+python evaluate.py --dir private --no-llm               # OCR+정규식만 (기준선)
+```
+
+출력: 이미지별 탐지 P/R/F1 · 매칭 F1 · 놓친 항목 + 평균. 세 설정을 비교하면 OCR 이 LLM 에 도움이 되는지 바로 보입니다.
 
 정답셋 형식: `{"items": [{"type": "name", "value": "홍길동", "entity": "p1"}, ...]}` — `entity` 가 같은 항목은 동일 정보.
 
