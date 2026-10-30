@@ -1,4 +1,4 @@
-"""OCR → 라인 단위 텍스트 + 박스. 엔진: OCR_ENGINE=tesseract(기본) | paddle"""
+"""OCR → 라인 단위 텍스트 + 박스. 엔진: OCR_ENGINE=tesseract(기본) | paddle | none(Vision LLM만)"""
 import os
 import re
 from functools import cache
@@ -11,7 +11,10 @@ _HANGUL = re.compile("[가-힣]")
 
 def ocr_lines(path: str, lang: str = "kor+eng") -> list[dict]:
     """반환: [{text, bbox:[x,y,w,h]}]"""
-    if os.getenv("OCR_ENGINE", "tesseract") == "paddle":
+    engine = os.getenv("OCR_ENGINE", "tesseract")
+    if engine == "none":
+        return []
+    if engine == "paddle":
         return _paddle_lines(path)
     return _tesseract_lines(path, lang)
 

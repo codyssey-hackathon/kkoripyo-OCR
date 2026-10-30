@@ -43,6 +43,6 @@ def extract_image(path: str, source_id: str, ocr_text: str, client=None) -> list
     mime = mimetypes.guess_type(path)[0] or "image/jpeg"
     b64 = base64.b64encode(open(path, "rb").read()).decode()
     return _call([
-        {"type": "text", "text": f"[{source_id}] 이미지. 참고용 OCR 결과(오류 있을 수 있음):\n{ocr_text}"},
+        {"type": "text", "text": f"[{source_id}] 이미지. 참고용 OCR 결과(오류 있을 수 있음):\n{ocr_text or '(없음)'}"},
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
     ], client)
