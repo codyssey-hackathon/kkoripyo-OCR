@@ -129,11 +129,46 @@ python -m kkoripyo --image some.jpg --text "댓글 내용" --no-llm      # OCR+�
 | `tesseract` (기본) | Tesseract 5 `kor+eng` | 위 1) |
 | `none` | OCR 생략, Vision LLM 만 사용 (지연·설치 최소화) | - |
 | `paddle` | PaddleOCR PP-OCRv5 검출 + [`korean_PP-OCRv5_mobile_rec`](https://aistudio.baidu.com/modelsdetail/31927/intro) 인식 | `pip install paddlepaddle paddleocr` (첫 실행 때 가중치 자동 다운로드) |
+| `remote` | 분리된 GPU 서버의 OCR API 호출 (`OCR_SERVER_URL`) | 아래 "GPU OCR 서버" |
 
 ```bash
 OCR_ENGINE=paddle python -m kkoripyo --image private/student_card.jpg --no-llm -o private/out_paddle.json
 python evaluate.py --pred private/out_paddle.json --gold private/student_card.gold.json
 ```
+
+### GPU OCR 서버 (분리 배포)
+
+```bash
+# GPU 서버에서
+pip install -r requirements.txt fastapi uvicorn paddleocr paddlepaddle-gpu   # CUDA 버전에 맞는 휠
+OCR_ENGINE=paddle uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000
+
+# 파이프라인 쪽에서
+OCR_ENGINE=remote OCR_SERVER_URL=http://<GPU서버>:8000 python -m kkoripyo --image a.jpg
+```
+
+`POST /ocr` — 크롤러/백엔드가 이미지 URL 또는 base64 를 보낸다.
+
+```jsonc
+// 요청 (1~20장)
+{"images": [{"id": "post:ABC/0", "url": "https://..."}, {"id": "post:ABC/1", "base64": "..."}]}
+// 응답 — 이미지별 상태. 입력 이미지는 되돌려주지 않고, 임시 파일은 처리 직후 삭제
+{"engine": "paddle", "results": [
+  {"id": "post:ABC/0", "status": "ok", "has_text": true, "lines": [{"text": "...", "bbox": [x, y, w, h]}], "error": null},
+  {"id": "post:ABC/1", "status": "no_text", "has_text": false, "lines": [], "error": null}
+]}
+```
+
+| status | 의미 | 다음 단계 |
+|---|---|---|
+| `ok` | 글자 있음, 인식 완료 | `lines` 사용 |
+| `no_text` | 이미지는 정상, 글자 영역 없음 (검출 단계에서 판단) | Vision LLM 만 |
+| `no_image` | `url`·`base64` 둘 다 없거나 빈 데이터 | 크롤러 데이터 확인 |
+| `invalid_image` | base64 깨짐 / 이미지로 열 수 없음 | 크롤러 데이터 확인 |
+| `too_large` | 10MB 초과 | 리사이즈 후 재요청 |
+| `fetch_failed` | URL 다운로드 실패(만료된 CDN URL 등) / http(s) 아님 | 재수집 |
+
+요청 자체가 잘못되면(빈 `images`, 20장 초과, 필드 누락) `422` 로 거절합니다. 한 장이 실패해도 나머지는 처리됩니다. `GET /health` 로 엔진 상태 확인.
 
 장소·얼굴·간판·교복 같은 **글자가 아닌 단서는 OCR로는 못 잡고** Vision LLM 단계(`llm.py`)에서 `location` / `face` / `other_clue` 로 찾습니다.
 
