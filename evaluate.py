@@ -11,7 +11,10 @@
       → 중복 제거(같은 값이 여러 출처에서 나온 것)와 동일 정보 연결을 함께 평가한다.
 """
 import argparse
+import glob
 import json
+import os
+import sys
 from itertools import combinations
 
 from kkoripyo.match import normalize
@@ -69,10 +72,46 @@ def evaluate(pred: dict, gold: dict) -> dict:
     }
 
 
+def evaluate_dir(folder: str, use_llm: bool) -> list[dict]:
+    """folder 안의 <이름>.gold.json 마다 같은 이름의 이미지를 1장씩 따로 돌려 평가. 결과는 <이름>.out.json 저장."""
+    from kkoripyo.pipeline import run
+    rows = []
+    for gold_path in sorted(glob.glob(os.path.join(folder, "*.gold.json"))):
+        stem = gold_path[:-len(".gold.json")]
+        img = next((stem + ext for ext in (".jpg", ".jpeg", ".png", ".webp") if os.path.exists(stem + ext)), None)
+        if not img:
+            print(f"[건너뜀] 이미지 없음: {gold_path}", file=sys.stderr)
+            continue
+        pred = json.loads(run([img], use_llm=use_llm).model_dump_json())
+        open(stem + ".out.json", "w", encoding="utf-8").write(json.dumps(pred, ensure_ascii=False, indent=2))
+        rows.append({"image": os.path.basename(img),
+                     **evaluate(pred, json.load(open(gold_path, encoding="utf-8")))})
+    return rows
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--pred", required=True)
-    ap.add_argument("--gold", required=True)
+    ap = argparse.ArgumentParser(description="단건: --pred --gold / 일괄: --dir private")
+    ap.add_argument("--pred")
+    ap.add_argument("--gold")
+    ap.add_argument("--dir", help="이미지 + <이름>.gold.json 이 있는 폴더 일괄 평가")
+    ap.add_argument("--no-llm", action="store_true")
     a = ap.parse_args()
-    report = evaluate(json.load(open(a.pred, encoding="utf-8")), json.load(open(a.gold, encoding="utf-8")))
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if a.dir:
+        from kkoripyo.pipeline import load_dotenv
+        load_dotenv()
+        use_llm = not a.no_llm and bool(os.getenv("OPENAI_API_KEY"))
+        rows = evaluate_dir(a.dir, use_llm)
+        print(f"LLM {'사용' if use_llm else '미사용'} · OCR_ENGINE={os.getenv('OCR_ENGINE', 'tesseract')}")
+        print(f"{'이미지':<28}{'탐지P':>7}{'탐지R':>7}{'탐지F1':>8}{'매칭F1':>8}  놓친 것")
+        for r in rows:
+            d, m = r["detection"], r["matching"]
+            print(f"{r['image']:<30}{d['precision']:>7}{d['recall']:>7}{d['f1']:>8}{m['f1']:>8}  {', '.join(d['missed'])}")
+        if rows:
+            avg = lambda k, s: round(sum(r[k][s] for r in rows) / len(rows), 3)
+            print(f"{'평균':<28}{avg('detection', 'precision'):>7}{avg('detection', 'recall'):>7}"
+                  f"{avg('detection', 'f1'):>8}{avg('matching', 'f1'):>8}")
+    elif a.pred and a.gold:
+        report = evaluate(json.load(open(a.pred, encoding="utf-8")), json.load(open(a.gold, encoding="utf-8")))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        ap.error("--dir 또는 --pred/--gold 를 지정하세요")

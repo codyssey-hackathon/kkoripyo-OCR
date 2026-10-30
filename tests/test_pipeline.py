@@ -72,6 +72,25 @@ def test_paddle_result_conversion():
         del os.environ["OCR_ENGINE"]
 
 
+def test_evaluate_dir(tmp_path=None):
+    """폴더 일괄 평가: <이름>.gold.json 과 같은 이름 이미지 쌍을 찾아 돌린다."""
+    import shutil
+    import tempfile
+    from evaluate import evaluate_dir
+    if not HAS_KOR:
+        return
+    d = tempfile.mkdtemp()
+    shutil.copy(os.path.join(ROOT, "fake_card.png"), os.path.join(d, "card.png"))
+    json.dump({"items": [{"type": "student_id", "value": "20261234"},
+                         {"type": "phone", "value": "010-1234-5678"}]},
+              open(os.path.join(d, "card.gold.json"), "w", encoding="utf-8"))
+    open(os.path.join(d, "orphan.gold.json"), "w").write('{"items": []}')  # 이미지 없는 정답셋은 건너뜀
+    rows = evaluate_dir(d, use_llm=False)
+    assert [r["image"] for r in rows] == ["card.png"]
+    assert rows[0]["detection"]["recall"] == 1.0
+    assert os.path.exists(os.path.join(d, "card.out.json"))
+
+
 def test_fake_sample_end_to_end():
     if not HAS_KOR:
         print("skip: tesseract kor 언어팩 없음")
