@@ -166,28 +166,43 @@ uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000   # 서버는 항상 Padd
 OCR_ENGINE=remote OCR_SERVER_URL=http://<GPU서버>:8000 python -m kkoripyo --image a.jpg
 ```
 
-`POST /ocr` — 크롤러/백엔드가 이미지 URL 또는 base64 를 보낸다.
+`POST /ocr` — 백엔드가 크롤링한 이미지 URL 을 보내면 서버가 내려받아 OCR 한다 (팀 API 명세).
 
 ```jsonc
 // 요청 (1~20장)
-{"images": [{"id": "post:ABC/0", "url": "https://..."}, {"id": "post:ABC/1", "base64": "..."}]}
-// 응답 — 이미지별 상태. 입력 이미지는 되돌려주지 않고, 임시 파일은 처리 직후 삭제
-{"engine": "paddle", "results": [
-  {"id": "post:ABC/0", "status": "ok", "has_text": true, "lines": [{"text": "...", "bbox": [x, y, w, h]}], "error": null},
-  {"id": "post:ABC/1", "status": "no_text", "has_text": false, "lines": [], "error": null}
+{"images": [
+  {"image_id": "DeNP20OktEn_0", "image_url": "https://instagram....jpg"},
+  {"image_id": "Ddtv14MGyhl_0", "image_url": "https://instagram....jpg"}
+]}
+// 응답 (요청 순서 그대로)
+{"images": [
+  {"image_id": "DeNP20OktEn_0", "image_url": "https://instagram....jpg", "isTextPresent": false, "data": "", "error": null},
+  {"image_id": "Ddtv14MGyhl_0", "image_url": "https://instagram....jpg", "isTextPresent": true,
+   "data": "Tuesdays with Morrie\nThe most important thing in life is to learn how to give out love", "error": null}
 ]}
 ```
 
-| status | 의미 | 다음 단계 |
+| 필드 | 설명 |
+|---|---|
+| `image_id` | 요청 값 그대로 |
+| `image_url` | 요청 값 그대로 |
+| `isTextPresent` | 글자가 있으면 `true` (검출 단계에서 글자 영역이 없으면 `false`) |
+| `data` | 인식한 글자, 줄마다 `\n` 으로 구분. 글자 없거나 실패하면 `""` |
+| `error` | **(확장 필드)** 실패 사유. 성공·글자없음은 `null` |
+| `base64` (요청) | **(확장 필드)** `image_url` 대신 이미지 바이트를 직접 보낼 때. 있으면 우선 사용 (파이프라인 `remote` 모드가 사용) |
+
+`error` 값은 `"코드: 설명"` 형식 — 글자가 없는 것(`error: null`)과 실패(`error` 있음)를 구분할 때 사용.
+
+| 코드 | 의미 | 다음 단계 |
 |---|---|---|
-| `ok` | 글자 있음, 인식 완료 | `lines` 사용 |
-| `no_text` | 이미지는 정상, 글자 영역 없음 (검출 단계에서 판단) | Vision LLM 만 |
-| `no_image` | `url`·`base64` 둘 다 없거나 빈 데이터 | 크롤러 데이터 확인 |
+| `no_image` | `image_url`·`base64` 둘 다 없거나 빈 데이터 | 크롤러 데이터 확인 |
 | `invalid_image` | base64 깨짐 / 이미지로 열 수 없음 | 크롤러 데이터 확인 |
 | `too_large` | 10MB 초과 | 리사이즈 후 재요청 |
-| `fetch_failed` | URL 다운로드 실패(만료된 CDN URL 등) / http(s) 아님 | 재수집 |
+| `fetch_failed` | URL 다운로드 실패(만료된 CDN URL, **서버 외부 인터넷 차단** 등) / http(s) 아님 | 재수집 / 서버 네트워크 확인 |
 
-요청 자체가 잘못되면(빈 `images`, 20장 초과, 필드 누락) `422` 로 거절합니다. 한 장이 실패해도 나머지는 처리됩니다. `GET /health` 로 엔진 상태 확인.
+요청 자체가 잘못되면(빈 `images`, 20장 초과, `image_id` 누락) `422` 로 거절합니다. 한 장이 실패해도 나머지는 처리됩니다. `GET /health` 로 엔진 상태 확인.
+
+> ⚠️ `image_url` 방식은 **GPU 서버가 인스타그램 CDN 에 접속할 수 있어야** 합니다. 서버에서 `curl -sI "<image_url>" | head -1` 로 먼저 확인하세요. 막혀 있으면 백엔드가 이미지를 받아 `base64` 로 보내야 합니다.
 
 장소·얼굴·간판·교복 같은 **글자가 아닌 단서는 OCR로는 못 잡고** Vision LLM 단계(`llm.py`)에서 `location` / `face` / `other_clue` 로 찾습니다.
 
