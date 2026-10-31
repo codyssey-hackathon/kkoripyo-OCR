@@ -15,7 +15,7 @@ SNS 프로필·게시글·댓글 텍스트와 사진에서 **개인정보를 찾
 |---|---|---|
 | 개인정보 탐지·분류 기준 정의 (개인정보보호위원회·법령 참고) | `kkoripyo/schema.py` `TAXONOMY` | ✅ |
 | 텍스트(프로필, 게시글, 댓글)에서 개인정보 추출 | `rules.py`(정규식) + `llm.py`(LLM) | ✅ |
-| OCR로 사진 속 텍스트 추출 | `ocr.py` (Tesseract `kor+eng` / PaddleOCR `korean_PP-OCRv5_mobile_rec`) | ✅ Tesseract / ⚠️ Paddle 실행 미검증 |
+| OCR로 사진 속 텍스트 추출 | GPU 서버 `server.py`: **PaddleOCR** `korean_PP-OCRv5_mobile_rec` / 로컬 테스트: Tesseract | ✅ (맥 CPU 실행 확인, GPU 서버 미검증) |
 | Vision LLM으로 사진 속 개인정보·식별 단서 탐지 | `llm.py` `extract_image` (OpenAI) | ✅ 코드 / ⚠️ 실호출 미검증 |
 | 유형·값·근거·출처로 구조화 (Structured Outputs) | `schema.py` (Pydantic → `chat.completions.parse`) | ✅ |
 | 중복 제거 및 동일 정보 매칭 | `match.py` | ✅ |
@@ -141,7 +141,7 @@ python evaluate.py --pred private/out_paddle.json --gold private/student_card.go
 ```bash
 # GPU 서버에서
 pip install -r requirements.txt fastapi uvicorn paddleocr paddlepaddle-gpu   # CUDA 버전에 맞는 휠
-OCR_ENGINE=paddle uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000
+uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000   # 서버는 항상 PaddleOCR (OCR_ENGINE 설정 불필요)
 
 # 파이프라인 쪽에서
 OCR_ENGINE=remote OCR_SERVER_URL=http://<GPU서버>:8000 python -m kkoripyo --image a.jpg
@@ -219,7 +219,9 @@ python evaluate.py --dir private --no-llm               # OCR+정규식만 (기�
 | 실제 학생증 캡처 1장 (비공개, `private/`) | 1.00 | 0.71 | 0.83 | 1.00 | 놓침: `재학`(흰 글씨/파란 배경 OCR 실패), 얼굴 |
 | 실제 손글씨 육아수첩 사진 1장 (비공개) | - | 0.00 | 0.00 | - | Tesseract가 손글씨를 거의 못 읽음 → 이름·생년월일·주민번호 앞자리·혈액형 9개 전부 놓침 |
 
-**손글씨는 Tesseract로 불가능**합니다. 손글씨·사진 속 글자는 PaddleOCR 또는 Vision LLM 결과로 평가해야 합니다.
+**손글씨는 Tesseract로 불가능**합니다. 그래서 GPU 서버는 PaddleOCR 을 씁니다.
+
+PaddleOCR 글자 판독 결과 (맥 CPU 실행, 항목 단위): 포털 캡처 **100%** (Tesseract 가 놓친 `재학`·`소속` 포함) / 손글씨 육아수첩 **약 60~70%** (주민번호 앞자리·어머니 이름·동그라미 친 성별 놓침).
 
 놓친 항목은 모두 Vision LLM 이 맡을 영역(얼굴, 배경색 위 글자, 문맥 단서)입니다. **LLM 포함 수치는 API 키로 직접 돌려서 이 표에 추가해야 합니다** (아래 "남은 문제").
 
@@ -233,7 +235,7 @@ python evaluate.py --dir private --no-llm               # OCR+정규식만 (기�
 ## 남은 문제
 
 - **Vision LLM 실호출 미검증**: 개발 환경에서 `api.openai.com` 접근이 막혀 있어, LLM 단계는 대역(stub) 클라이언트로 병합 로직만 테스트했습니다. 키를 넣고 `private/` 데이터로 한 번 돌려 위 표를 채워주세요. 기본 모델은 `gpt-4o-mini`, `.env` 의 `OPENAI_MODEL` 로 변경.
-- **PaddleOCR 실행 미검증**: 개발 환경에서 모델 가중치 서버 접근이 막혀, 결과 변환 로직만 대역으로 테스트했습니다. 맥에서 위 명령으로 돌려 Tesseract 수치와 비교해 주세요.
+- **GPU 서버 PaddleOCR 미검증**: 맥(CPU)에서는 정상 동작 확인. GPU 서버에서 `paddlepaddle-gpu` 로 실제 GPU 를 쓰는지 `nvidia-smi` 로 확인 필요.
 - 규칙 기반 이름 탐지는 "3음절 + 흔한 성씨" 휴리스틱이라 오탐(`연락처`)이 납니다. LLM 사용 시 LLM 결과를 우선 보세요.
 - 얼굴 매칭은 "한 분석 = 한 사람" 가정. 여러 사진에 여러 얼굴이면 얼굴 임베딩 비교가 필요합니다.
 - 서로 다른 유형 간 연결(이 이름 ↔ 이 학번이 같은 사람)은 하지 않습니다. 관계 그래프 파트에서 `entities` 를 노드로 쓰면 됩니다.
