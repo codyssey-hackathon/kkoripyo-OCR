@@ -109,7 +109,7 @@ def load_dotenv(path=".env"):
     if os.path.exists(path):
         for line in open(path, encoding="utf-8"):
             k, sep, v = line.strip().partition("=")
-            if sep and not k.startswith("#"):
+            if sep and v.strip() and not k.startswith("#"):  # 빈 값(KEY=)은 미설정으로 취급
                 os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
 

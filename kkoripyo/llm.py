@@ -25,7 +25,7 @@ def _client():
 def _call(content: list, client=None) -> list[LLMFinding]:
     client = client or _client()
     resp = client.chat.completions.parse(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
         messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
         response_format=LLMFindings,  # temperature 생략: gpt-5/o 계열은 지정 시 거부
     )
