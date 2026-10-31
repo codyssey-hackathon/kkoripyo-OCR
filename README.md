@@ -131,6 +131,47 @@ API 요청·응답 형식은 아래 [OCR 서버 API 명세](#ocr-서버-api-명�
 
 `OPENAI_API_KEY` 가 없으면 경고를 띄우고 OCR+정규식만으로 돌며, 출력의 `llm_used` 가 `false` 가 됩니다.
 
+## 개인정보 추출 API (JSON2)
+
+크롤러 응답 JSON 을 그대로 보내면 JSON2 를 돌려준다. **OpenAI 를 호출하므로 외부 인터넷이 되는 서버**(일반/백엔드 서버)에서 띄운다.
+
+```bash
+pip install -r requirements.txt fastapi uvicorn
+# .env: OPENAI_API_KEY, OCR_ENGINE=remote, OCR_SERVER_URL=http://<GPU서버 사설IP>:8000
+uvicorn kkoripyo.api:app --host 0.0.0.0 --port 8001
+```
+
+- Base URL: `http://<서버IP>:8001`
+- 문서: `http://<서버IP>:8001/docs`
+
+| 메서드 | 경로 | 용도 |
+|---|---|---|
+| GET | `/health` | 상태 확인 → `{"ok": true, "ocr_engine": "remote", "llm_available": true}` |
+| POST | `/analyze` | 크롤러 응답 → JSON2 |
+| POST | `/analyze?llm=false` | OpenAI 없이 OCR+정규식만 (테스트·비용 절약용) |
+
+**요청** — 크롤러 응답 그대로 (`samples/fake_crawl.json` 참고)
+```json
+{"results": [{"post_id": "FAKE001", "text": "캡션", "author_username": "gildong_hong", "author_name": "홍길동",
+              "image_url": "https://...", "top_comments": [{"text": "댓글", "author_username": "friend"}]}]}
+```
+
+**응답 (200)** — JSON2 (`samples/fake.json2.json` 참고)
+```json
+{"schema_version": "json2/v1", "subject": "gildong_hong", "llm_used": true, "items": [...], "entities": [...]}
+```
+
+| 상태 코드 | 의미 |
+|---|---|
+| 200 | 성공. `OPENAI_API_KEY` 가 없으면 OCR+정규식만 돌고 `llm_used: false` |
+| 422 | 크롤러 응답 형식이 아님 (`results` 배열 없음) |
+| 502 | 분석 중 실패 (OCR 서버 연결 실패, OpenAI 오류 등). `detail` 에 사유 |
+
+- `image_url` 은 이 서버가 내려받아 OCR 서버에 base64 로 보낸다 → **GPU 서버는 인터넷 불필요**
+- 만료된 `image_url` 은 건너뛰고 나머지로 분석 (서버 로그에 경고)
+- 받은 이미지는 임시 폴더에서 처리 후 즉시 삭제, 결과는 저장하지 않음
+- 소요 시간: 이미지 수 × (다운로드 + OCR 약 0.2초 + OpenAI 수 초) → 백엔드 타임아웃은 넉넉히 (예: 120초)
+
 ## OCR 서버 API 명세
 
 - Base URL: `http://<GPU서버 사설IP>:8000` (해커톤 SSL-VPN 연결 필요)
