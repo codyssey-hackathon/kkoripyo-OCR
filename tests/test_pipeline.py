@@ -91,6 +91,48 @@ def test_evaluate_dir(tmp_path=None):
     assert os.path.exists(os.path.join(d, "card.out.json"))
 
 
+def test_from_crawler_format():
+    profile, urls = __import__("kkoripyo.pipeline", fromlist=["x"]).from_crawler(
+        json.load(open(os.path.join(ROOT, "fake_crawl.json"), encoding="utf-8")))
+    assert profile["username"] == "gildong_hong" and profile["full_name"] == "홍길동"
+    assert profile["recent_posts"][0]["comment_texts"][0].startswith("길동아")
+    assert urls == [("FAKE001", "https://example.com/fake_card.png")]
+
+
+def test_crawler_json_with_image_url(tmp_path=None):
+    """크롤러 JSON 의 image_url 을 내려받아 OCR 까지 도는지 (로컬 HTTP 서버로 확인). 깨진 URL 은 건너뜀."""
+    import functools
+    import http.server
+    import tempfile
+    import threading
+    from kkoripyo.pipeline import main
+    if not HAS_KOR:
+        return
+    srv = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        d = tempfile.mkdtemp()
+        crawl = json.load(open(os.path.join(ROOT, "fake_crawl.json"), encoding="utf-8"))
+        crawl["results"][0]["image_url"] = f"http://127.0.0.1:{srv.server_port}/fake_card.png"
+        crawl["results"].append({"post_id": "BROKEN", "text": "", "image_url": f"http://127.0.0.1:{srv.server_port}/none.png"})
+        json.dump(crawl, open(os.path.join(d, "crawl.json"), "w", encoding="utf-8"))
+        out = os.path.join(d, "out.json")
+        prev = os.environ.get("OCR_ENGINE")
+        os.environ["OCR_ENGINE"] = "tesseract"  # .env 의 remote 설정과 무관하게 로컬에서 확인
+        try:
+            main(["--profile", os.path.join(d, "crawl.json"), "--no-llm", "-o", out])
+        finally:
+            os.environ.pop("OCR_ENGINE") if prev is None else os.environ.__setitem__("OCR_ENGINE", prev)
+        res = json.load(open(out, encoding="utf-8"))
+    finally:
+        srv.shutdown()
+    assert res["subject"] == "gildong_hong"
+    by_type = {e["type"]: e for e in res["entities"]}
+    assert "image:FAKE001.jpg" in by_type["student_id"]["sources"]           # 사진에서만 나오는 학번
+    assert len(by_type["phone"]["sources"]) == 3                             # 캡션 + 댓글 + 사진 → 한 엔티티
+
+
 def test_fake_sample_end_to_end():
     if not HAS_KOR:
         print("skip: tesseract kor 언어팩 없음")

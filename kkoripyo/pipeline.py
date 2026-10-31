@@ -1,6 +1,7 @@
 """입력(크롤러 JSON + 이미지 + 텍스트) → JSON2."""
 import os
 import sys
+import tempfile
 
 from . import llm, rules
 from .match import build_entities, normalize
@@ -17,6 +18,44 @@ def profile_texts(profile: dict) -> dict[str, str]:
         for i, c in enumerate(p.get("comment_texts", [])):  # 크롤러가 댓글을 넣으면 같이 본다
             out[f"post:{p.get('shortcode')}.comment{i}"] = c
     return {k: v for k, v in out.items() if v.strip()}
+
+
+def from_crawler(data: dict) -> tuple[dict, list[tuple[str, str]]]:
+    """크롤러 API 응답({"results": [...]}) → 내부 프로필 형식 + [(post_id, image_url)].
+    instaloader 형식(results 없음)은 그대로 통과."""
+    if "results" not in data:
+        return data, []
+    posts = data["results"] or []
+    # shortcut: results 가 모두 같은 계정의 게시물이라고 가정, 여러 계정 섞이면 계정별로 나눠서 run
+    first = posts[0] if posts else {}
+    profile = {"username": first.get("author_username"), "full_name": first.get("author_name"),
+               "recent_posts": [{"shortcode": p.get("post_id"), "caption": p.get("text"),
+                                 "comment_texts": [c.get("text") or "" for c in p.get("top_comments") or []]}
+                                for p in posts]}
+    return profile, [(p["post_id"], p["image_url"]) for p in posts if p.get("image_url") and p.get("post_id")]
+
+
+def download_images(urls: list[tuple[str, str]], folder: str, max_bytes: int = 10 * 1024 * 1024) -> list[str]:
+    """이미지 URL → folder/<post_id>.jpg. 실패(만료된 CDN URL 등)는 경고 후 건너뜀."""
+    import urllib.request
+    paths = []
+    for post_id, url in urls:
+        if not url.startswith(("http://", "https://")):
+            print(f"[경고] 이미지 건너뜀: {post_id} (http(s) URL 아님)", file=sys.stderr)
+            continue
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                data = r.read(max_bytes + 1)
+        except Exception as e:
+            print(f"[경고] 이미지 다운로드 실패: {post_id} ({type(e).__name__})", file=sys.stderr)
+            continue
+        if not data or len(data) > max_bytes:
+            print(f"[경고] 이미지 건너뜀: {post_id} (비었거나 10MB 초과)", file=sys.stderr)
+            continue
+        path = os.path.join(folder, f"{post_id}.jpg")
+        open(path, "wb").write(data)
+        paths.append(path)
+    return paths
 
 
 def run(images=(), profile=None, texts=None, use_llm=True, client=None) -> Result:
@@ -79,7 +118,7 @@ def main(argv=None):
     import json
     ap = argparse.ArgumentParser(prog="python -m kkoripyo", description="OCR·Vision LLM 개인정보 추출 → JSON2")
     ap.add_argument("--image", action="append", default=[], help="이미지 경로(여러 번 가능)")
-    ap.add_argument("--profile", help="instaloader 크롤러 결과 JSON")
+    ap.add_argument("--profile", help="크롤러 결과 JSON (크롤러 API results[] 형식 또는 instaloader 형식)")
     ap.add_argument("--text", action="append", default=[], help="추가 텍스트(여러 번 가능)")
     ap.add_argument("--no-llm", action="store_true", help="OCR+정규식만 사용")
     ap.add_argument("-o", "--out", help="출력 JSON 경로(없으면 stdout)")
@@ -92,7 +131,13 @@ def main(argv=None):
         use_llm = False
     profile = json.load(open(a.profile, encoding="utf-8")) if a.profile else None
     texts = {f"text:{i}": t for i, t in enumerate(a.text)}
-    res = run(a.image, profile, texts, use_llm).model_dump_json(indent=2)
+    # 크롤러 JSON 의 image_url 은 임시 폴더에 받아서 분석하고, 끝나면 폴더째 삭제(개인정보)
+    with tempfile.TemporaryDirectory() as tmp:
+        images = list(a.image)
+        if profile:
+            profile, urls = from_crawler(profile)
+            images += download_images(urls, tmp)
+        res = run(images, profile, texts, use_llm).model_dump_json(indent=2)
     if a.out:
         open(a.out, "w", encoding="utf-8").write(res)
     else:
