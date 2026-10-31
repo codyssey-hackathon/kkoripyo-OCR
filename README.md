@@ -5,7 +5,7 @@ SNS 프로필·게시글·댓글 텍스트와 사진에서 **개인정보를 찾
 
 ```
 크롤러 결과(JSON1: 프로필·캡션·댓글)  ─┐
-게시물 이미지 ─────────────────────────┼─▶ kkoripyo ─▶ JSON2 ─▶ 관계 그래프 · 위험 점수(다른 파트)
+게시물 이미지 ─────────────────────────┼─▶ kkoripyo ─▶ JSON2 ─▶ 교차 추론 · JSON3(다른 파트)
 추가 텍스트 ───────────────────────────┘
 ```
 
@@ -47,10 +47,13 @@ SNS 프로필·게시글·댓글 텍스트와 사진에서 **개인정보를 찾
 | `affiliation` `location` `other_clue` | 준식별자 | 단독으론 약하지만 **결합하면** 식별 가능 (소속, 위치, 학년·재학상태, 교복·명찰 …) | 법 제2조 제1호 나목, 가명정보 처리 가이드라인의 식별자/준식별자 구분 |
 
 - `face`: 얼굴 사진은 알아볼 수 있으면 개인정보. 특징을 추출해 식별에 쓰면 생체인식정보(민감정보)가 되지만, 이 모듈은 "노출 여부"만 판단하므로 일반개인정보로 둡니다.
-- 서비스 목적이 "제3자가 무엇을 알아낼 수 있나"이므로 **준식별자도 적극적으로 수집**합니다. 결합 위험 계산은 다음 단계(관계 그래프)의 몫입니다.
+- 서비스 목적이 "제3자가 무엇을 알아낼 수 있나"이므로 **준식별자도 적극적으로 수집**합니다. 정보 결합 추론은 다음 단계(JSON3)의 몫입니다.
 - 표는 `TAXONOMY` 한 곳에서 관리하고, LLM 프롬프트도 이 표로 자동 생성됩니다.
 
-## JSON2 스키마
+## AI 추론 담당 전달용 JSON (JSON2 출력 명세)
+
+다음 단계(1·2차 JSON2 병합 → 교차 추론 Agent → JSON3)를 만드는 담당자를 위한 출력 형식입니다.
+스키마 정의는 `kkoripyo/schema.py`, 전체 샘플은 `samples/fake.json2.json` (가상 인물).
 
 ```jsonc
 {
@@ -89,7 +92,20 @@ SNS 프로필·게시글·댓글 텍스트와 사진에서 **개인정보를 찾
 }
 ```
 
-`entities[].sources` 가 "같은 정보가 몇 군데에 노출됐는가"를 바로 보여주므로 위험 점수 계산에 그대로 쓸 수 있습니다.
+### 추론 담당이 알아둘 것
+
+| 항목 | 내용 |
+|---|---|
+| 기준 목록 | **`entities`** 기준으로 추론 (같은 정보가 이미 하나로 묶여 있어 중복으로 잡히지 않음) |
+| 사실 / 판단 구분 | `source.method` 가 `regex`·`ocr+regex`·`profile_field` 면 원문에 있는 **사실**, `llm`·`vision_llm` 이면 AI **판단** → `evidence` 로 검증 |
+| 추론 근거 | `items[].evidence` (탐지 근거), `entities[].sources` (정보가 나온 출처 목록) |
+| 여러 계정 병합 | `entity_id` 는 파일 안에서만 고유 → `subject:E1` 처럼 계정 이름을 앞에 붙일 것 |
+| 계정 간 같은 정보 비교 | `kkoripyo.match` 의 `normalize()`, `same_name()` 그대로 사용 가능 |
+| `confidence` | 보정 안 된 값 → 필터링 용도로만 |
+| `source.bbox` | GPU 서버 OCR 을 거친 항목은 `null` (OCR 서버 응답에 위치 정보 없음) |
+| 이미지 출처 | 크롤러 JSON 기준 `image:<post_id>.jpg` |
+| 캡션 / 댓글 출처 | `post:<post_id>.caption` / `post:<post_id>.comment<N>` |
+| 하지 않는 것 | 서로 다른 유형 간 연결(이 이름 ↔ 이 학번), 결합 추론, 계정 간 비교, 위험도 점수 → 추론 단계에서 처리 |
 
 ## 동일 정보 매칭 규칙
 
@@ -166,47 +182,108 @@ uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000   # 서버는 항상 Padd
 OCR_ENGINE=remote OCR_SERVER_URL=http://<GPU서버>:8000 python -m kkoripyo --image a.jpg
 ```
 
-`POST /ocr` — 백엔드가 크롤링한 이미지 URL 을 보내면 서버가 내려받아 OCR 한다 (팀 API 명세).
+API 요청·응답 형식은 아래 [OCR 서버 API 명세](#ocr-서버-api-명세) 참고.
 
-```jsonc
-// 요청 (1~20장)
-{"images": [
-  {"image_id": "DeNP20OktEn_0", "image_url": "https://instagram....jpg"},
-  {"image_id": "Ddtv14MGyhl_0", "image_url": "https://instagram....jpg"}
-]}
-// 응답 (요청 순서 그대로)
-{"images": [
-  {"image_id": "DeNP20OktEn_0", "image_url": "https://instagram....jpg", "isTextPresent": false, "data": "", "error": null},
-  {"image_id": "Ddtv14MGyhl_0", "image_url": "https://instagram....jpg", "isTextPresent": true,
-   "data": "Tuesdays with Morrie\nThe most important thing in life is to learn how to give out love", "error": null}
-]}
+장소·얼굴·간판·교복 같은 **글자가 아닌 단서는 OCR로는 못 잡고** Vision LLM 단계(`llm.py`)에서 `location` / `face` / `other_clue` 로 찾습니다.
+
+`OPENAI_API_KEY` 가 없으면 경고를 띄우고 OCR+정규식만으로 돌며, 출력의 `llm_used` 가 `false` 가 됩니다.
+
+## OCR 서버 API 명세
+
+- Base URL: `http://<GPU서버 사설IP>:8000` (해커톤 SSL-VPN 연결 필요)
+- 문서: `http://<GPU서버 사설IP>:8000/docs` (FastAPI 자동 문서, 브라우저에서 바로 테스트 가능)
+- 엔진: PaddleOCR (PP-OCRv5 검출 + `korean_PP-OCRv5_mobile_rec` 인식)
+- 속도: 이미지 1장 약 0.2초 (서버 기동 후 첫 요청만 약 5초, 이미지 다운로드 시간 별도)
+
+### GET /health
+```json
+{"ok": true, "engine": "paddle"}
 ```
 
+### POST /ocr
+이미지 URL 을 보내면 서버가 내려받아 글자를 인식한다. 한 번에 1~20장.
+
+**요청**
+```json
+{
+  "images": [
+    {"image_id": "DeNP20OktEn_0", "image_url": "https://instagram....jpg"},
+    {"image_id": "Ddtv14MGyhl_0", "image_url": "https://instagram....jpg"}
+  ]
+}
+```
+| 필드 | 필수 | 설명 |
+|---|---|---|
+| `image_id` | O | 이미지 구분값. 응답에 그대로 돌아옴 |
+| `image_url` | △ | 이미지 URL (http/https) |
+| `base64` | △ | **(확장)** URL 대신 이미지 바이트를 base64 로 직접 전송. 있으면 우선 사용 (파이프라인 `remote` 모드가 사용) |
+
+`image_url` 과 `base64` 중 하나는 필수.
+
+**응답 (200)**
+```json
+{
+  "images": [
+    {
+      "image_id": "DeNP20OktEn_0",
+      "image_url": "https://instagram....jpg",
+      "isTextPresent": false,
+      "data": "",
+      "error": null
+    },
+    {
+      "image_id": "Ddtv14MGyhl_0",
+      "image_url": "https://instagram....jpg",
+      "isTextPresent": true,
+      "data": "Tuesdays with Morrie\nThe most important thing in life is to learn how to give out love",
+      "error": null
+    }
+  ]
+}
+```
 | 필드 | 설명 |
 |---|---|
 | `image_id` | 요청 값 그대로 |
 | `image_url` | 요청 값 그대로 |
 | `isTextPresent` | 글자가 있으면 `true` (검출 단계에서 글자 영역이 없으면 `false`) |
-| `data` | 인식한 글자, 줄마다 `\n` 으로 구분. 글자 없거나 실패하면 `""` |
-| `error` | **(확장 필드)** 실패 사유. 성공·글자없음은 `null` |
-| `base64` (요청) | **(확장 필드)** `image_url` 대신 이미지 바이트를 직접 보낼 때. 있으면 우선 사용 (파이프라인 `remote` 모드가 사용) |
+| `data` | 인식한 글자. 줄마다 `\n` 으로 구분. 글자 없거나 실패하면 `""` |
+| `error` | **(확장)** 실패 사유 (`"코드: 설명"`). 성공·글자 없음은 `null` |
 
-`error` 값은 `"코드: 설명"` 형식 — 글자가 없는 것(`error: null`)과 실패(`error` 있음)를 구분할 때 사용.
+- 결과 순서 = 요청 순서
+- 일부 이미지가 실패해도 응답은 **200**, 해당 이미지의 `error` 에만 표시
+- 요청 형식이 잘못되면 **422** (빈 `images`, 21장 이상, `image_id` 누락)
+- 받은 이미지는 저장하지 않음 (처리 후 임시 파일 즉시 삭제)
 
-| 코드 | 의미 | 다음 단계 |
+**error 코드** — `isTextPresent: false` 일 때 `error` 가 `null` 이면 글자 없는 정상 이미지, 값이 있으면 실패.
+
+| 코드 | 의미 | 할 일 |
 |---|---|---|
-| `no_image` | `image_url`·`base64` 둘 다 없거나 빈 데이터 | 크롤러 데이터 확인 |
-| `invalid_image` | base64 깨짐 / 이미지로 열 수 없음 | 크롤러 데이터 확인 |
+| `no_image` | `image_url`·`base64` 둘 다 없음 / 빈 데이터 | 크롤러 데이터 확인 |
+| `invalid_image` | base64 깨짐 / 이미지가 아님 | 크롤러 데이터 확인 |
 | `too_large` | 10MB 초과 | 리사이즈 후 재요청 |
-| `fetch_failed` | URL 다운로드 실패(만료된 CDN URL, **서버 외부 인터넷 차단** 등) / http(s) 아님 | 재수집 / 서버 네트워크 확인 |
+| `fetch_failed` | URL 다운로드 실패 (만료된 인스타 URL, 서버 외부 인터넷 차단 등) / http(s) 아님 | 재수집 또는 `base64` 로 전송 |
 
-요청 자체가 잘못되면(빈 `images`, 20장 초과, `image_id` 누락) `422` 로 거절합니다. 한 장이 실패해도 나머지는 처리됩니다. `GET /health` 로 엔진 상태 확인.
+### 참고 사항
+- **확장 필드**: `error`(응답), `base64`(요청)는 팀 명세에 추가한 필드. 쓰지 않으면 무시해도 기존 형식과 동일
+- **위치 정보 없음**: 응답에 글자 위치(`bbox`)가 없어서, GPU 서버를 거친 JSON2 항목의 `source.bbox` 는 `null`. 사진 위에 위치를 표시하려면 응답에 `lines: [{"text", "bbox"}]` 추가 필요
+- **외부 인터넷 필요**: `image_url` 방식은 GPU 서버가 인스타그램 CDN 에 접속할 수 있어야 함. 서버에서 `curl -sI "<image_url>" | head -1` 로 `200` 확인. 막혀 있으면 백엔드가 이미지를 받아 `base64` 로 전송
+- **URL 만료**: 인스타 이미지 URL 은 시간이 지나면 만료되므로 크롤링 직후 바로 요청
 
-> ⚠️ `image_url` 방식은 **GPU 서버가 인스타그램 CDN 에 접속할 수 있어야** 합니다. 서버에서 `curl -sI "<image_url>" | head -1` 로 먼저 확인하세요. 막혀 있으면 백엔드가 이미지를 받아 `base64` 로 보내야 합니다.
+### 호출 예시
+```bash
+curl -X POST http://<GPU서버 사설IP>:8000/ocr -H 'Content-Type: application/json' \
+  -d '{"images":[{"image_id":"t1","image_url":"https://..."}]}'
+```
+```python
+import json, urllib.request
 
-장소·얼굴·간판·교복 같은 **글자가 아닌 단서는 OCR로는 못 잡고** Vision LLM 단계(`llm.py`)에서 `location` / `face` / `other_clue` 로 찾습니다.
-
-`OPENAI_API_KEY` 가 없으면 경고를 띄우고 OCR+정규식만으로 돌며, 출력의 `llm_used` 가 `false` 가 됩니다.
+body = {"images": [{"image_id": "t1", "image_url": "https://..."}]}
+req = urllib.request.Request("http://<GPU서버 사설IP>:8000/ocr", data=json.dumps(body).encode(),
+                             headers={"Content-Type": "application/json"})
+res = json.load(urllib.request.urlopen(req, timeout=60))
+for img in res["images"]:
+    print(img["image_id"], img["isTextPresent"], img["data"], img["error"])
+```
 
 ## 평가
 
