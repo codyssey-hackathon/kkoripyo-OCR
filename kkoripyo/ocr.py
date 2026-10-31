@@ -1,5 +1,6 @@
 """OCR → 라인 단위 텍스트 + 박스.
-엔진: OCR_ENGINE=tesseract(기본) | paddle | remote(OCR_SERVER_URL 의 GPU 서버 호출) | none(Vision LLM만)"""
+엔진: OCR_ENGINE=tesseract(기본, 로컬 테스트) | paddle | remote(OCR_SERVER_URL 의 GPU 서버 호출) | none(Vision LLM만)
+GPU 서버(server.py)는 항상 paddle 을 쓴다."""
 import base64
 import json
 import os
@@ -20,7 +21,7 @@ def ocr_lines(path: str, lang: str = "kor+eng") -> list[dict]:
     if engine == "none":
         return []
     if engine == "paddle":
-        return _paddle_lines(path)
+        return paddle_lines(path)
     if engine == "remote":
         return _remote_lines(path)
     return _tesseract_lines(path, lang)
@@ -47,7 +48,7 @@ def _paddle():
                      use_doc_unwarping=False, use_textline_orientation=False)
 
 
-def _paddle_lines(path: str) -> list[dict]:
+def paddle_lines(path: str) -> list[dict]:
     res = _paddle().predict(path)[0]
     return [{"text": t, "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]}
             for t, (x0, y0, x1, y1) in zip(res["rec_texts"], res["rec_boxes"]) if t.strip()]
