@@ -31,7 +31,7 @@ def test_request_level_validation():
 
 def test_per_image_status(monkeypatch):
     seen = []
-    monkeypatch.setattr(server, "ocr_lines", lambda p: seen.append(p) or [])  # 글자 없음
+    monkeypatch.setattr(server, "tesseract_lines", lambda p: seen.append(p) or [])  # 글자 없음
     big = base64.b64encode(b"0" * (server.MAX_BYTES + 1)).decode()
     r = _post([
         {"id": "empty"},                                       # url/base64 둘 다 없음
@@ -50,7 +50,7 @@ def test_per_image_status(monkeypatch):
 
 
 def test_text_found(monkeypatch):
-    monkeypatch.setattr(server, "ocr_lines", lambda p: [{"text": "홍길동", "bbox": [1, 2, 3, 4]}])
+    monkeypatch.setattr(server, "tesseract_lines", lambda p: [{"text": "홍길동", "bbox": [1, 2, 3, 4]}])
     res = _post([{"id": "card", "base64": _png()}]).json()["results"][0]
     assert res == {"id": "card", "status": "ok", "has_text": True,
                    "lines": [{"text": "홍길동", "bbox": [1, 2, 3, 4]}], "error": None}

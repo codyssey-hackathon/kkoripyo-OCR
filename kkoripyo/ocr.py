@@ -1,12 +1,11 @@
-"""OCR → 라인 단위 텍스트 + 박스.
-엔진: OCR_ENGINE=tesseract(기본) | paddle | remote(OCR_SERVER_URL 의 GPU 서버 호출) | none(Vision LLM만)"""
+"""OCR(Tesseract) → 라인 단위 텍스트 + 박스.
+OCR_ENGINE=tesseract(기본, 로컬 실행) | remote(OCR_SERVER_URL 의 GPU 서버 호출) | none(Vision LLM만)"""
 import base64
 import json
 import os
 import re
 import sys
 import urllib.request
-from functools import cache
 
 import pytesseract
 from PIL import Image
@@ -19,11 +18,9 @@ def ocr_lines(path: str, lang: str = "kor+eng") -> list[dict]:
     engine = os.getenv("OCR_ENGINE", "tesseract")
     if engine == "none":
         return []
-    if engine == "paddle":
-        return _paddle_lines(path)
     if engine == "remote":
         return _remote_lines(path)
-    return _tesseract_lines(path, lang)
+    return tesseract_lines(path, lang)
 
 
 def _remote_lines(path: str) -> list[dict]:
@@ -39,21 +36,7 @@ def _remote_lines(path: str) -> list[dict]:
     return res["lines"]
 
 
-@cache
-def _paddle():
-    from paddleocr import PaddleOCR  # 선택 의존성: pip install paddlepaddle paddleocr
-    # lang="korean" → PP-OCRv5 텍스트 검출 + korean_PP-OCRv5_mobile_rec 인식. 첫 실행 때 가중치 자동 다운로드
-    return PaddleOCR(lang="korean", use_doc_orientation_classify=False,
-                     use_doc_unwarping=False, use_textline_orientation=False)
-
-
-def _paddle_lines(path: str) -> list[dict]:
-    res = _paddle().predict(path)[0]
-    return [{"text": t, "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]}
-            for t, (x0, y0, x1, y1) in zip(res["rec_texts"], res["rec_boxes"]) if t.strip()]
-
-
-def _tesseract_lines(path: str, lang: str) -> list[dict]:
+def tesseract_lines(path: str, lang: str = "kor+eng") -> list[dict]:
     # psm 6(단일 블록)이 프로필 캡처류에서 가장 안정적이었음
     d = pytesseract.image_to_data(Image.open(path), lang=lang, config="--psm 6",
                                   output_type=pytesseract.Output.DICT)
