@@ -120,6 +120,7 @@ python evaluate.py --pred private/out_paddle.json --gold private/student_card.go
 # GPU 서버에서
 pip install -r requirements.txt fastapi uvicorn paddleocr paddlepaddle-gpu   # CUDA 버전에 맞는 휠
 uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000   # 서버는 항상 PaddleOCR (OCR_ENGINE 설정 불필요)
+curl http://localhost:8000/health   # "cuda_build": true 여야 GPU 사용. false 면 paddlepaddle-gpu 재설치
 
 # 파이프라인 쪽에서
 OCR_ENGINE=remote OCR_SERVER_URL=http://<GPU서버>:8000 python -m kkoripyo --image a.jpg
@@ -181,8 +182,9 @@ uvicorn kkoripyo.api:app --host 0.0.0.0 --port 8001
 
 ### GET /health
 ```json
-{"ok": true, "engine": "paddle"}
+{"ok": true, "engine": "paddle", "device": "gpu", "cuda_build": true}
 ```
+`device` 기본값은 `gpu` (GPU 를 못 쓰면 CPU 로 넘어가지 않고 에러). `cuda_build: false` 면 CPU 전용 paddle 이 설치된 것. 맥 등 GPU 없는 곳에서 PaddleOCR 을 직접 돌릴 땐 `.env` 에 `OCR_DEVICE=cpu`.
 
 ### POST /ocr
 이미지 URL 을 보내면 서버가 내려받아 글자를 인식한다. 한 번에 1~20장.
