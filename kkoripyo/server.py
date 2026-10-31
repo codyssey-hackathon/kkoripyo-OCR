@@ -1,4 +1,4 @@
-"""GPU 서버용 OCR API (Tesseract). 실행: uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000
+"""GPU 서버용 OCR API. 실행: OCR_ENGINE=paddle uvicorn kkoripyo.server:app --host 0.0.0.0 --port 8000
 
 요청마다 이미지를 검증 → 글자 유무 판단 → 인식 순으로 처리하고, 이미지별 상태를 돌려준다.
 입력 이미지·원문은 응답에 다시 싣지 않고, 임시 파일은 처리 직후 지운다(개인정보).
@@ -6,6 +6,7 @@
 import base64
 import binascii
 import io
+import os
 import tempfile
 import urllib.request
 from typing import Literal, Optional
@@ -14,7 +15,7 @@ from fastapi import FastAPI
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from .ocr import tesseract_lines
+from .ocr import ocr_lines
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 20
@@ -56,13 +57,13 @@ app = FastAPI(title="kkoripyo OCR")
 
 @app.get("/health")
 def health():
-    return {"ok": True, "engine": "tesseract"}
+    return {"ok": True, "engine": os.getenv("OCR_ENGINE", "tesseract")}
 
 
 @app.post("/ocr", response_model=OcrResponse)
 def ocr(req: OcrRequest) -> OcrResponse:
     # 한 장이 실패해도 나머지는 처리한다
-    return OcrResponse(engine="tesseract", results=[_one(i) for i in req.images])
+    return OcrResponse(engine=os.getenv("OCR_ENGINE", "tesseract"), results=[_one(i) for i in req.images])
 
 
 def _one(img: ImageIn) -> ImageOut:
@@ -78,11 +79,12 @@ def _one(img: ImageIn) -> ImageOut:
     except Exception:
         return fail("invalid_image", "이미지로 열 수 없는 데이터")
 
+    # OCR 엔진이 확장자로 형식을 판단하므로 실제 형식으로 저장
     with tempfile.NamedTemporaryFile(suffix=f".{fmt}") as f:
         f.write(data)
         f.flush()
-        lines = tesseract_lines(f.name)
-    # Tesseract가 읽은 글자가 하나도 없으면 글자 없는 이미지로 판단
+        lines = ocr_lines(f.name)
+    # 검출 단계에서 글자 영역이 하나도 없으면 인식 결과도 비어 있다 → 글자 없는 이미지
     return ImageOut(id=img.id, status="ok" if lines else "no_text", has_text=bool(lines),
                     lines=[Line(**l) for l in lines])
 

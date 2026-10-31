@@ -58,6 +58,20 @@ def test_llm_merge():
     assert {"llm", "profile_field"} <= methods  # LLM 결과가 기존 이름 엔티티로 합쳐짐
 
 
+def test_paddle_result_conversion():
+    """PaddleOCR 결과(rec_texts, rec_boxes=[x0,y0,x1,y1]) → 라인 형식. 가중치 없이 대역으로 확인."""
+    from kkoripyo import ocr
+    fake = SimpleNamespace(predict=lambda _: [{"rec_texts": ["홍길동 [20261234]", " "],
+                                               "rec_boxes": [[10, 20, 110, 60], [0, 0, 1, 1]]}])
+    orig, ocr._paddle = ocr._paddle, lambda: fake
+    os.environ["OCR_ENGINE"] = "paddle"
+    try:
+        assert ocr.ocr_lines("x.png") == [{"text": "홍길동 [20261234]", "bbox": [10, 20, 100, 40]}]
+    finally:
+        ocr._paddle = orig
+        del os.environ["OCR_ENGINE"]
+
+
 def test_evaluate_dir(tmp_path=None):
     """폴더 일괄 평가: <이름>.gold.json 과 같은 이름 이미지 쌍을 찾아 돌린다."""
     import shutil
