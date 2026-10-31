@@ -120,7 +120,26 @@ cp .env.example .env    # OPENAI_API_KEY 입력, 모델 변경은 OPENAI_MODEL
 # 4) 실행
 python -m kkoripyo --profile samples/fake_profile.json --image samples/fake_card.png -o out.json
 python -m kkoripyo --image some.jpg --text "댓글 내용" --no-llm      # OCR+정규식만
+python -m kkoripyo --profile 크롤러응답.json -o private/out.json      # 크롤러 API 응답 그대로
 ```
+
+### 크롤러 입력 형식
+
+`--profile` 은 크롤러 API 응답(`results[]`)을 그대로 받습니다. 예시: `samples/fake_crawl.json`
+
+| 크롤러 필드 | 사용처 | JSON2 출처(`input_id`) |
+|---|---|---|
+| `results[0].author_username` | 계정 (`sns_account`) | `profile.username` |
+| `results[0].author_name` | 이름 (`name`) | `profile.full_name` |
+| `results[].text` | 캡션 → 정규식 + LLM | `post:<post_id>.caption` |
+| `results[].top_comments[].text` | 댓글 → 정규식 + LLM | `post:<post_id>.comment<N>` |
+| `results[].image_url` | 임시 폴더에 내려받아 OCR + Vision LLM, 끝나면 삭제 | `image:<post_id>.jpg` |
+
+- 이미지 다운로드는 파이프라인(맥/백엔드)이 하므로 **GPU 서버는 인터넷 불필요**. 받은 이미지는 base64 로 GPU 서버에 전달
+- 만료된 `image_url`, 10MB 초과 이미지는 경고 후 건너뜀 (나머지는 계속 처리)
+- `results` 는 한 계정의 게시물이라고 가정. 여러 계정이 섞이면 계정별로 나눠서 실행
+- `billing`, `quota`, `like_count` 등 나머지 필드는 사용하지 않음. 댓글 작성자(`top_comments[].author_username`)도 아직 사용 안 함 → 주변 계정 선정 단계에서 활용 가능
+- 기존 instaloader 형식(`samples/fake_profile.json`)도 계속 지원
 
 ### OCR 엔진 선택
 
