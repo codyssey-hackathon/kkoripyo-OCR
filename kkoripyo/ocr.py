@@ -29,15 +29,16 @@ def ocr_lines(path: str, lang: str = "kor+eng") -> list[dict]:
 
 def _remote_lines(path: str) -> list[dict]:
     """GPU 서버(kkoripyo.server)의 /ocr 호출. 서버가 실패 상태를 주면 경고 후 빈 결과(파이프라인은 계속)."""
-    body = json.dumps({"images": [{"id": os.path.basename(path),
+    body = json.dumps({"images": [{"image_id": os.path.basename(path),
                                    "base64": base64.b64encode(open(path, "rb").read()).decode()}]}).encode()
     req = urllib.request.Request(os.environ["OCR_SERVER_URL"].rstrip("/") + "/ocr", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
-        res = json.load(r)["results"][0]
-    if res["status"] not in ("ok", "no_text"):
-        print(f"[경고] OCR 서버: {path} → {res['status']} ({res['error']})", file=sys.stderr)
-    return res["lines"]
+        res = json.load(r)["images"][0]
+    if res.get("error"):
+        print(f"[경고] OCR 서버: {path} → {res['error']}", file=sys.stderr)
+    # 팀 API 명세는 글자만 돌려주므로 위치(bbox)는 없음
+    return [{"text": t, "bbox": None} for t in res["data"].split("\n") if t.strip()]
 
 
 @cache
