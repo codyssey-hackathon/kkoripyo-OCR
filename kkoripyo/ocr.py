@@ -45,7 +45,8 @@ def _remote_lines(path: str) -> list[dict]:
 def _paddle():
     from paddleocr import PaddleOCR  # 선택 의존성: pip install paddlepaddle paddleocr
     # lang="korean" → PP-OCRv5 텍스트 검출 + korean_PP-OCRv5_mobile_rec 인식. 첫 실행 때 가중치 자동 다운로드
-    return PaddleOCR(lang="korean", use_doc_orientation_classify=False,
+    # 기본 gpu: GPU 를 못 쓰면 조용히 CPU 로 넘어가지 않고 에러로 알린다. 맥 등에선 OCR_DEVICE=cpu
+    return PaddleOCR(lang="korean", device=os.getenv("OCR_DEVICE") or "gpu", use_doc_orientation_classify=False,
                      use_doc_unwarping=False, use_textline_orientation=False)
 
 

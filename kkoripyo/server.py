@@ -6,6 +6,7 @@
 import base64
 import binascii
 import io
+import os
 import tempfile
 import urllib.request
 from typing import Optional
@@ -47,7 +48,9 @@ app = FastAPI(title="kkoripyo OCR")
 
 @app.get("/health")
 def health():
-    return {"ok": True, "engine": "paddle"}
+    import paddle
+    return {"ok": True, "engine": "paddle", "device": os.getenv("OCR_DEVICE") or "gpu",
+            "cuda_build": paddle.device.is_compiled_with_cuda()}  # false 면 CPU 전용 paddle 이 설치된 것
 
 
 @app.post("/ocr", response_model=OcrResponse)
